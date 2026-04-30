@@ -5,7 +5,8 @@
     "Punchline": "Don't miss any Maiden spawn anymore!",
     "Description": "Maidens will now emit audible notification and chat message!",
     "InternalName": "MaidenAlert",
-    "AssemblyVersion": "1.0.0.1",
+    "AssemblyVersion": "1.0.0.2",
+    "TestingAssemblyVersion": null,
     "RepoUrl": "https://github.com/seventity7/MaidenAlert",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
@@ -18,6 +19,7 @@
     "LoadSync": false,
     "CanUnloadAsync": false,
     "DownloadLinkInstall": "https://github.com/seventity7/MaidenAlert/releases/latest/download/MaidenAlert.zip",
+    "DownloadLinkTesting": "https://github.com/seventity7/MaidenAlert/releases/latest/download/MaidenAlert.zip",
     "DownloadLinkUpdate": "https://github.com/seventity7/MaidenAlert/releases/latest/download/MaidenAlert.zip",
     "IconUrl": "https://raw.githubusercontent.com/seventity7/MaidenAlert/main/icon.png",
     "AcceptsFeedback": true
