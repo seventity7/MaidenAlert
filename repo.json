@@ -4,7 +4,7 @@
     "Name": "Maiden Alert",
     "Punchline": "Don't miss any Maiden spawn anymore!",
     "Description": "Maidens will now emit audible notification and chat message!",
-    "InternalName": "Maiden Alert",
+    "InternalName": "MaidenAlert",
     "AssemblyVersion": "1.0.0",
     "RepoUrl": "https://github.com/seventity7/MaidenAlert",
     "ApplicableVersion": "any",
