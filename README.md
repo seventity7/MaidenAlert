@@ -1,4 +1,4 @@
-`Most Recent Changelog: 1.0.0 - April 30/2026`
+`Most Recent Changelog: 1.0.0.3 - April 30/2026`
 
 ### **Maiden Alert**
 ## ✨ Settings _(`/malert`, `/maidenalert`)_

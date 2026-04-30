@@ -1,9 +1,9 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>1.0.0.2</Version>
-    <AssemblyVersion>1.0.0.2</AssemblyVersion>
-    <FileVersion>1.0.0.2</FileVersion>
-    <InformationalVersion>1.0.0.2</InformationalVersion>
+    <Version>1.0.0.3</Version>
+    <AssemblyVersion>1.0.0.3</AssemblyVersion>
+    <FileVersion>1.0.0.3</FileVersion>
+    <InformationalVersion>1.0.0.3</InformationalVersion>
     <AssemblyName>MaidenAlert</AssemblyName>
     <PackageProjectUrl>https://github.com/seventity7/MaidenAlert</PackageProjectUrl>
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>

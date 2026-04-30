@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
+using Dalamud.Game.Chat;
 using Dalamud.Game.Command;
-using Dalamud.Game.Gui.Toast;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface.Windowing;
@@ -18,13 +18,13 @@ public sealed class Plugin : IDalamudPlugin
     private const string CommandShort = "/malert";
     private const string CommandLong = "/maidenalert";
     private const string CommandTest = "/malerttest";
-    private const string MaidenToastText = "The smell of death has drawn a Forlorn maiden to the battlefield!";
+    private const uint MaidenSpawnLogMessageId = 2838;
     private const string AlertMessage = "[Maiden Alert] A maiden has just spawned in this fate right now!";
 
     public const int MinSoundEffectId = 1;
     public const int MaxSoundEffectId = 16;
 
-    // UIColor row used by UIForegroundPayload. This restores the same chat color behavior from the earlier build.
+    // UIColor row used by UIForegroundPayload. This keeps the same chat color behavior from the current build.
     private const ushort PinkUIColor = 576;
 
     [PluginService]
@@ -32,9 +32,6 @@ public sealed class Plugin : IDalamudPlugin
 
     [PluginService]
     internal static ICommandManager CommandManager { get; private set; } = null!;
-
-    [PluginService]
-    internal static IToastGui ToastGui { get; private set; } = null!;
 
     [PluginService]
     internal static IChatGui ChatGui { get; private set; } = null!;
@@ -72,9 +69,7 @@ public sealed class Plugin : IDalamudPlugin
             ShowInHelp = false,
         });
 
-        ToastGui.Toast += OnNormalToast;
-        ToastGui.QuestToast += OnQuestToast;
-        ToastGui.ErrorToast += OnErrorToast;
+        ChatGui.LogMessage += OnLogMessage;
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
@@ -87,9 +82,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
 
-        ToastGui.Toast -= OnNormalToast;
-        ToastGui.QuestToast -= OnQuestToast;
-        ToastGui.ErrorToast -= OnErrorToast;
+        ChatGui.LogMessage -= OnLogMessage;
 
         CommandManager.RemoveHandler(CommandShort);
         CommandManager.RemoveHandler(CommandLong);
@@ -109,24 +102,9 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnTestCommand(string command, string args) => TriggerTestAlert();
 
-    private void OnNormalToast(ref SeString message, ref ToastOptions options, ref bool isHandled)
+    private void OnLogMessage(ILogMessage message)
     {
-        TryHandleToast(message);
-    }
-
-    private void OnQuestToast(ref SeString message, ref QuestToastOptions options, ref bool isHandled)
-    {
-        TryHandleToast(message);
-    }
-
-    private void OnErrorToast(ref SeString message, ref bool isHandled)
-    {
-        TryHandleToast(message);
-    }
-
-    private void TryHandleToast(SeString toastMessage)
-    {
-        if (!IsMaidenToast(toastMessage))
+        if (message.LogMessageId != MaidenSpawnLogMessageId)
             return;
 
         TriggerAlert(ignoreDuplicateGuard: false);
@@ -134,7 +112,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void TriggerAlert(bool ignoreDuplicateGuard)
     {
-        if (!ignoreDuplicateGuard && IsDuplicateToast())
+        if (!ignoreDuplicateGuard && IsDuplicateAlert())
             return;
 
         if (Configuration.MessageAlert)
@@ -144,19 +122,7 @@ public sealed class Plugin : IDalamudPlugin
             PlaySoundEffect(GetSelectedSoundId());
     }
 
-    private static bool IsMaidenToast(SeString toastMessage)
-    {
-        var text = toastMessage.TextValue.Replace("\u00AD", string.Empty).Trim();
-
-        if (text.Equals(MaidenToastText, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Tolerant fallback in case the game wraps text or punctuation slightly differently.
-        return text.Contains("Forlorn maiden", StringComparison.OrdinalIgnoreCase)
-            && text.Contains("battlefield", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private bool IsDuplicateToast()
+    private bool IsDuplicateAlert()
     {
         var now = DateTime.UtcNow;
         if (now - lastAlertUtc < TimeSpan.FromSeconds(2))
@@ -180,8 +146,6 @@ public sealed class Plugin : IDalamudPlugin
 
     private static void PrintAlertMessage()
     {
-        // Restored to the previous UIForegroundPayload/UIGlowPayload behavior.
-        // This was the version that appeared light blue in-game before the raw Color macro change.
         var message = new SeString(
             new UIForegroundPayload(PinkUIColor),
             new UIGlowPayload(PinkUIColor),
@@ -205,7 +169,6 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to play Maiden Alert sound effect.");
         }
     }
-
 
     private static RawPayload BoldPayload(bool enabled) => CreateMacroPayload(0x19, EncodeUIntExpression(enabled ? 1u : 0u));
 
