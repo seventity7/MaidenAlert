@@ -6,7 +6,7 @@
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
     <IsPackable>false</IsPackable>
 
-    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <RuntimeFrameworkVersion>10.0.0</RuntimeFrameworkVersion>
     <TargetLatestRuntimePatch>false</TargetLatestRuntimePatch>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
@@ -15,6 +15,5 @@
     <Platforms>x64</Platforms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 </Project>
