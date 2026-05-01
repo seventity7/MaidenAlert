@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Game.Chat;
 using Dalamud.Game.Command;
+using Dalamud.Game.Gui.Toast;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface.Windowing;
@@ -37,6 +38,15 @@ public sealed class Plugin : IDalamudPlugin
     internal static IChatGui ChatGui { get; private set; } = null!;
 
     [PluginService]
+    internal static IObjectTable ObjectTable { get; private set; } = null!;
+
+    [PluginService]
+    internal static IGameGui GameGui { get; private set; } = null!;
+
+    [PluginService]
+    internal static IToastGui ToastGui { get; private set; } = null!;
+
+    [PluginService]
     internal static IPluginLog Log { get; private set; } = null!;
 
     public readonly WindowSystem WindowSystem = new("MaidenAlert");
@@ -44,6 +54,7 @@ public sealed class Plugin : IDalamudPlugin
     public Configuration Configuration { get; }
 
     private readonly MainWindow mainWindow;
+    private readonly MaidenOverlayRenderer maidenOverlayRenderer;
     private DateTime lastAlertUtc = DateTime.MinValue;
 
     public Plugin()
@@ -52,6 +63,7 @@ public sealed class Plugin : IDalamudPlugin
         Configuration.Validate();
 
         mainWindow = new MainWindow(this);
+        maidenOverlayRenderer = new MaidenOverlayRenderer(ObjectTable, GameGui);
         WindowSystem.AddWindow(mainWindow);
 
         CommandManager.AddHandler(CommandShort, new CommandInfo(OnCommand)
@@ -70,19 +82,25 @@ public sealed class Plugin : IDalamudPlugin
         });
 
         ChatGui.LogMessage += OnLogMessage;
+        ToastGui.Toast += OnToast;
+        ToastGui.QuestToast += OnQuestToast;
+        ToastGui.ErrorToast += OnErrorToast;
 
-        PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw += DrawUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
     }
 
     public void Dispose()
     {
-        PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= DrawUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
 
         ChatGui.LogMessage -= OnLogMessage;
+        ToastGui.Toast -= OnToast;
+        ToastGui.QuestToast -= OnQuestToast;
+        ToastGui.ErrorToast -= OnErrorToast;
 
         CommandManager.RemoveHandler(CommandShort);
         CommandManager.RemoveHandler(CommandLong);
@@ -98,6 +116,12 @@ public sealed class Plugin : IDalamudPlugin
 
     public void PlaySelectedSoundOnly() => PlaySoundEffect(GetSelectedSoundId());
 
+    private void DrawUi()
+    {
+        WindowSystem.Draw();
+        maidenOverlayRenderer.Draw();
+    }
+
     private void OnCommand(string command, string args) => ToggleMainUi();
 
     private void OnTestCommand(string command, string args) => TriggerTestAlert();
@@ -108,6 +132,28 @@ public sealed class Plugin : IDalamudPlugin
             return;
 
         TriggerAlert(ignoreDuplicateGuard: false);
+        maidenOverlayRenderer.StartTracking();
+    }
+
+    private void OnToast(ref SeString message, ref ToastOptions options, ref bool isHandled)
+        => StopOverlayIfMaidenDissipated(message);
+
+    private void OnQuestToast(ref SeString message, ref QuestToastOptions options, ref bool isHandled)
+        => StopOverlayIfMaidenDissipated(message);
+
+    private void OnErrorToast(ref SeString message, ref bool isHandled)
+        => StopOverlayIfMaidenDissipated(message);
+
+    private void StopOverlayIfMaidenDissipated(SeString message)
+    {
+        var text = message.TextValue;
+        if (text.Contains("forlorn", StringComparison.OrdinalIgnoreCase) &&
+            (text.Contains("dissipates", StringComparison.OrdinalIgnoreCase) ||
+             text.Contains("disappears", StringComparison.OrdinalIgnoreCase) ||
+             text.Contains("disappear", StringComparison.OrdinalIgnoreCase)))
+        {
+            maidenOverlayRenderer.StopTracking();
+        }
     }
 
     private void TriggerAlert(bool ignoreDuplicateGuard)
