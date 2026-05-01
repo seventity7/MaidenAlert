@@ -1,0 +1,27 @@
+[
+  {
+    "Author": "Bryer",
+    "Name": "Maiden Alert",
+    "Punchline": "Don't miss any Maiden spawn anymore!",
+    "Description": "Maidens will now emit audible notification, chat message and on-screen tracker!",
+    "InternalName": "MaidenAlert",
+    "AssemblyVersion": "1.0.0.5",
+    "TestingAssemblyVersion": null,
+    "RepoUrl": "https://github.com/seventity7/MaidenAlert",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadCount": 0,
+    "LastUpdate": "1777569300",
+    "LoadPriority": 0,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "DownloadLinkInstall": "https://github.com/seventity7/MaidenAlert/releases/latest/download/MaidenAlert.zip",
+    "DownloadLinkTesting": "https://github.com/seventity7/MaidenAlert/releases/latest/download/MaidenAlert.zip",
+    "DownloadLinkUpdate": "https://github.com/seventity7/MaidenAlert/releases/latest/download/MaidenAlert.zip",
+    "IconUrl": "https://raw.githubusercontent.com/seventity7/MaidenAlert/main/icon.png",
+    "AcceptsFeedback": true
+  }
+]
