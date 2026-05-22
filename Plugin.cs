@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using Dalamud.Game;
 using Dalamud.Game.Chat;
 using Dalamud.Game.Command;
-using Dalamud.Game.Gui.Toast;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface.Windowing;
@@ -20,7 +20,6 @@ public sealed class Plugin : IDalamudPlugin
     private const string CommandLong = "/maidenalert";
     private const string CommandTest = "/malerttest";
     private const uint MaidenSpawnLogMessageId = 2838;
-    private const string AlertMessage = "[Maiden Alert] A maiden has just spawned in this fate right now!";
 
     public const int MinSoundEffectId = 1;
     public const int MaxSoundEffectId = 16;
@@ -46,7 +45,7 @@ public sealed class Plugin : IDalamudPlugin
     internal static IGameGui GameGui { get; private set; } = null!;
 
     [PluginService]
-    internal static IToastGui ToastGui { get; private set; } = null!;
+    internal static IDataManager DataManager { get; private set; } = null!;
 
     [PluginService]
     internal static IPluginLog Log { get; private set; } = null!;
@@ -65,7 +64,7 @@ public sealed class Plugin : IDalamudPlugin
         Configuration.Validate();
 
         mainWindow = new MainWindow(this);
-        maidenOverlayRenderer = new MaidenOverlayRenderer(ObjectTable, GameGui);
+        maidenOverlayRenderer = new MaidenOverlayRenderer(ObjectTable, GameGui, DataManager, () => DataManager.Language);
         WindowSystem.AddWindow(mainWindow);
 
         CommandManager.AddHandler(CommandShort, new CommandInfo(OnCommand)
@@ -84,9 +83,6 @@ public sealed class Plugin : IDalamudPlugin
         });
 
         ChatGui.LogMessage += OnLogMessage;
-        ToastGui.Toast += OnToast;
-        ToastGui.QuestToast += OnQuestToast;
-        ToastGui.ErrorToast += OnErrorToast;
 
         PluginInterface.UiBuilder.Draw += DrawUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
@@ -100,9 +96,6 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
 
         ChatGui.LogMessage -= OnLogMessage;
-        ToastGui.Toast -= OnToast;
-        ToastGui.QuestToast -= OnQuestToast;
-        ToastGui.ErrorToast -= OnErrorToast;
 
         CommandManager.RemoveHandler(CommandShort);
         CommandManager.RemoveHandler(CommandLong);
@@ -113,6 +106,8 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public void ToggleMainUi() => mainWindow.Toggle();
+
+    public ClientLanguage CurrentLanguage => DataManager.Language;
 
     public void TriggerTestAlert() => TriggerAlert(ignoreDuplicateGuard: true);
 
@@ -135,27 +130,6 @@ public sealed class Plugin : IDalamudPlugin
 
         TriggerAlert(ignoreDuplicateGuard: false);
         maidenOverlayRenderer.StartTracking();
-    }
-
-    private void OnToast(ref SeString message, ref ToastOptions options, ref bool isHandled)
-        => StopOverlayIfMaidenDissipated(message);
-
-    private void OnQuestToast(ref SeString message, ref QuestToastOptions options, ref bool isHandled)
-        => StopOverlayIfMaidenDissipated(message);
-
-    private void OnErrorToast(ref SeString message, ref bool isHandled)
-        => StopOverlayIfMaidenDissipated(message);
-
-    private void StopOverlayIfMaidenDissipated(SeString message)
-    {
-        var text = message.TextValue;
-        if (text.Contains("forlorn", StringComparison.OrdinalIgnoreCase) &&
-            (text.Contains("dissipates", StringComparison.OrdinalIgnoreCase) ||
-             text.Contains("disappears", StringComparison.OrdinalIgnoreCase) ||
-             text.Contains("disappear", StringComparison.OrdinalIgnoreCase)))
-        {
-            maidenOverlayRenderer.StopTracking();
-        }
     }
 
     private void TriggerAlert(bool ignoreDuplicateGuard)
@@ -198,7 +172,7 @@ public sealed class Plugin : IDalamudPlugin
             new UIForegroundPayload(PinkUIColor),
             new UIGlowPayload(PinkUIColor),
             BoldPayload(true),
-            new TextPayload(AlertMessage),
+            new TextPayload(MaidenText.AlertMessage(DataManager.Language)),
             BoldPayload(false),
             UIGlowPayload.UIGlowOff,
             UIForegroundPayload.UIForegroundOff);

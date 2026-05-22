@@ -27,20 +27,22 @@ public sealed class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
-        DrawCheckboxRow("Disable sound", nameof(plugin.Configuration.DisableSound), plugin.Configuration.DisableSound, value => plugin.Configuration.DisableSound = value);
-        DrawCheckboxRow("Message Alert", nameof(plugin.Configuration.MessageAlert), plugin.Configuration.MessageAlert, value => plugin.Configuration.MessageAlert = value);
+        var lang = plugin.CurrentLanguage;
+
+        DrawCheckboxRow(MaidenText.DisableSound(lang), nameof(plugin.Configuration.DisableSound), plugin.Configuration.DisableSound, value => plugin.Configuration.DisableSound = value);
+        DrawCheckboxRow(MaidenText.MessageAlert(lang), nameof(plugin.Configuration.MessageAlert), plugin.Configuration.MessageAlert, value => plugin.Configuration.MessageAlert = value);
         DrawSoundRow();
         DrawCheckboxRow(
-            "Track overlay",
+            MaidenText.TrackOverlay(lang),
             nameof(plugin.Configuration.TrackOverlay),
             plugin.Configuration.TrackOverlay,
             value => plugin.Configuration.TrackOverlay = value,
-            "Enable/Disable on-screen tracker overlay.");
+            MaidenText.TrackOverlayTip(lang));
         DrawTrackerDistanceRow();
 
         ImGui.Spacing();
 
-        if (ImGui.Button("Test notification"))
+        if (ImGui.Button($"{MaidenText.TestNotification(lang)}##MaidenAlertTestNotification"))
             plugin.TriggerTestAlert();
     }
 
@@ -62,7 +64,7 @@ public sealed class MainWindow : Window, IDisposable
     private void DrawSoundRow()
     {
         ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Sound");
+        ImGui.TextUnformatted(MaidenText.Sound(plugin.CurrentLanguage));
         ImGui.SameLine(160f);
 
         var selectedSound = Math.Clamp(plugin.Configuration.SoundId, Plugin.MinSoundEffectId, Plugin.MaxSoundEffectId);
@@ -89,16 +91,17 @@ public sealed class MainWindow : Window, IDisposable
 
         ImGui.SameLine();
 
-        if (ImGui.Button("Test##MaidenAlertSoundTest"))
+        if (ImGui.Button($"{MaidenText.Test(plugin.CurrentLanguage)}##MaidenAlertSoundTest"))
             plugin.PlaySelectedSoundOnly();
     }
 
     private void DrawTrackerDistanceRow()
     {
-        const string trackerDistanceTooltip = "Distance less than or equal to the chosen value,\nthe overlay disappears temporarily.";
+        var lang = plugin.CurrentLanguage;
+        var trackerDistanceTooltip = MaidenText.TrackerDistanceTip(lang);
 
         ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Tracker distance");
+        ImGui.TextUnformatted(MaidenText.TrackerDistance(lang));
         DrawTooltipIfHovered(trackerDistanceTooltip);
         ImGui.SameLine(160f);
 

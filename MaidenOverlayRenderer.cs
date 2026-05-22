@@ -1,9 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
+using Lumina.Excel;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 
 namespace MaidenAlert;
@@ -26,16 +29,24 @@ public sealed class MaidenOverlayRenderer
 
     private readonly IObjectTable objectTable;
     private readonly IGameGui gameGui;
+    private readonly HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Func<ClientLanguage> language;
 
     private bool tracking;
     private ulong trackedObjectId;
     private DateTime searchUntilUtc = DateTime.MinValue;
     private DateTime lastSeenUtc = DateTime.MinValue;
 
-    public MaidenOverlayRenderer(IObjectTable objectTable, IGameGui gameGui)
+    public MaidenOverlayRenderer(IObjectTable objectTable, IGameGui gameGui, IDataManager dataManager, Func<ClientLanguage> language)
     {
         this.objectTable = objectTable;
         this.gameGui = gameGui;
+        this.language = language;
+
+        foreach (var name in MaidenNames)
+            this.names.Add(name);
+
+        this.PullLocalizedNames(dataManager);
     }
 
     public void StartTracking()
@@ -75,7 +86,7 @@ public sealed class MaidenOverlayRenderer
         if (!this.TryGetMarkerPosition(player, maiden, out var markerPosition, out var clampedToEdge, out var isBehindCamera))
             return;
 
-        this.DrawMarker(markerPosition, distance, clampedToEdge, isBehindCamera);
+        this.DrawMarker(markerPosition, distance, clampedToEdge, isBehindCamera, maiden.Name.TextValue);
     }
 
     private IGameObject? ResolveTrackedMaiden(IGameObject player)
@@ -86,10 +97,10 @@ public sealed class MaidenOverlayRenderer
         if (this.trackedObjectId != 0)
             current = this.objectTable.SearchById(this.trackedObjectId);
 
-        if (!IsValidMaiden(current))
+        if (!this.IsValidMaiden(current))
             current = this.FindClosestMaiden(player);
 
-        if (IsValidMaiden(current))
+        if (this.IsValidMaiden(current))
         {
             this.trackedObjectId = current!.GameObjectId;
             this.lastSeenUtc = now;
@@ -116,7 +127,7 @@ public sealed class MaidenOverlayRenderer
 
         foreach (var obj in this.objectTable)
         {
-            if (!IsValidMaiden(obj))
+            if (!this.IsValidMaiden(obj))
                 continue;
 
             var distance = Vector3.Distance(player.Position, obj!.Position);
@@ -130,7 +141,7 @@ public sealed class MaidenOverlayRenderer
         return best;
     }
 
-    private static bool IsValidMaiden(IGameObject? obj)
+    private bool IsValidMaiden(IGameObject? obj)
     {
         if (obj == null || !obj.IsValid())
             return false;
@@ -144,14 +155,65 @@ public sealed class MaidenOverlayRenderer
         if (obj is ICharacter character && character.CurrentHp == 0)
             return false;
 
-        var name = obj.Name.TextValue;
-        foreach (var maidenName in MaidenNames)
-        {
-            if (string.Equals(name, maidenName, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
+        return this.names.Contains(obj.Name.TextValue);
+    }
 
-        return false;
+    private void PullLocalizedNames(IDataManager dataManager)
+    {
+        try
+        {
+            var ids = new HashSet<uint>();
+            var english = dataManager.GetExcelSheet<RawRow>(ClientLanguage.English, "BNpcName");
+
+            foreach (var row in english)
+            {
+                var text = ReadBnpcName(row);
+                foreach (var known in MaidenNames)
+                {
+                    if (string.Equals(text, known, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ids.Add(row.RowId);
+                        break;
+                    }
+                }
+            }
+
+            if (ids.Count == 0)
+                return;
+
+            foreach (var lang in Enum.GetValues<ClientLanguage>())
+            {
+                try
+                {
+                    var sheet = dataManager.GetExcelSheet<RawRow>(lang, "BNpcName");
+                    foreach (var id in ids)
+                    {
+                        var name = ReadBnpcName(sheet.GetRow(id));
+                        if (!string.IsNullOrWhiteSpace(name))
+                            this.names.Add(name);
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Debug(ex, "Could not read Maiden BNpcName rows; using fallback names.");
+        }
+    }
+
+    private static string ReadBnpcName(RawRow row)
+    {
+        try
+        {
+            return row.ReadStringColumn(0).ToString().Trim();
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private bool TryGetMarkerPosition(IGameObject player, IGameObject maiden, out Vector2 position, out bool clampedToEdge, out bool isBehindCamera)
@@ -285,7 +347,7 @@ public sealed class MaidenOverlayRenderer
         return angle;
     }
 
-    private void DrawMarker(Vector2 center, float distance, bool clampedToEdge, bool isBehindCamera)
+    private void DrawMarker(Vector2 center, float distance, bool clampedToEdge, bool isBehindCamera, string maidenName)
     {
         var drawList = ImGui.GetForegroundDrawList();
         var accent = Color(255, 136, 204, 255);
@@ -310,10 +372,7 @@ public sealed class MaidenOverlayRenderer
         if (clampedToEdge)
             this.DrawArrow(center, accent, isBehindCamera);
 
-        var label = isBehindCamera
-            ? $"Forlorn Maiden - {distance:0}m - behind"
-            : $"Forlorn Maiden - {distance:0}m";
-
+        var label = MaidenText.MarkerLabel(this.language(), maidenName, distance, isBehindCamera);
         this.DrawLabel(drawList, center + new Vector2(0f, 22f), label, white, black);
     }
 
