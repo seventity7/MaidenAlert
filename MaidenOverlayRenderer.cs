@@ -1,12 +1,11 @@
 using System;
-using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.Enums;
-using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Interface.Textures;
+using Dalamud.Interface.Utility;
 using Dalamud.Plugin.Services;
-using Lumina.Excel;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 
 namespace MaidenAlert;
@@ -15,13 +14,20 @@ public sealed class MaidenOverlayRenderer
 {
     private const float SearchTimeoutSeconds = 20.0f;
     private const float MissingTimeoutSeconds = 3.0f;
-    private const float OffscreenPreferredInset = 500.0f;
-    private const float OffscreenMaxViewportFactor = 0.30f;
-    private const float OffscreenMinimumCenterDistance = 90.0f;
-    private const float OffscreenMinimumEdgeMargin = 42.0f;
 
-    private static readonly string[] MaidenNames =
-    {
+    private const uint MaidenIconId = 60508;
+    private const uint DirectionArrowIconId = 60541;
+    private const string MaidenOverlayName = "Maiden Forlorn";
+
+    private const int CompassRadius = 750;
+    private const int IconScaleFactor = 100;
+    private const int IconOpacity = 100;
+    private const int SafeZoneOffsetWidth = 0;
+    private const int SafeZoneOffsetHeight = 0;
+    private const int CenterPointXOffset = 0;
+    private const int CenterPointYOffset = 0;
+
+    private static readonly string[] MaidenNames = {
         "Forlorn Maiden",
         "Forlon Maiden",
         "The Forlorn",
@@ -29,64 +35,81 @@ public sealed class MaidenOverlayRenderer
 
     private readonly IObjectTable objectTable;
     private readonly IGameGui gameGui;
-    private readonly HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Func<ClientLanguage> language;
 
     private bool tracking;
     private ulong trackedObjectId;
     private DateTime searchUntilUtc = DateTime.MinValue;
     private DateTime lastSeenUtc = DateTime.MinValue;
 
-    public MaidenOverlayRenderer(IObjectTable objectTable, IGameGui gameGui, IDataManager dataManager, Func<ClientLanguage> language)
+    private Vector2? stableScreenPosition;
+    private Vector2? stableCompassPosition;
+    private string cachedDistanceLabel = string.Empty;
+    private int cachedDistanceYalms = -1;
+    private DateTime lastDistanceLabelUpdateUtc = DateTime.MinValue;
+
+    public MaidenOverlayRenderer(IObjectTable objectTable, IGameGui gameGui)
     {
         this.objectTable = objectTable;
         this.gameGui = gameGui;
-        this.language = language;
-
-        foreach (var name in MaidenNames)
-            this.names.Add(name);
-
-        this.PullLocalizedNames(dataManager);
     }
 
     public void StartTracking()
     {
-        this.tracking = true;
-        this.trackedObjectId = 0;
-        this.searchUntilUtc = DateTime.UtcNow.AddSeconds(SearchTimeoutSeconds);
-        this.lastSeenUtc = DateTime.MinValue;
+        tracking = true;
+        trackedObjectId = 0;
+        searchUntilUtc = DateTime.UtcNow.AddSeconds(SearchTimeoutSeconds);
+        lastSeenUtc = DateTime.MinValue;
+        ResetStabilizedState();
     }
 
     public void StopTracking()
     {
-        this.tracking = false;
-        this.trackedObjectId = 0;
-        this.searchUntilUtc = DateTime.MinValue;
-        this.lastSeenUtc = DateTime.MinValue;
+        tracking = false;
+        trackedObjectId = 0;
+        searchUntilUtc = DateTime.MinValue;
+        lastSeenUtc = DateTime.MinValue;
+        ResetStabilizedState();
     }
 
-    public void Draw(bool overlayEnabled, float hideDistance)
+    public void Draw(bool overlayEnabled, float hideDistance, float overlayScale)
     {
-        if (!this.tracking || this.gameGui.GameUiHidden)
+        if (!tracking || gameGui.GameUiHidden)
             return;
 
-        var player = this.objectTable.LocalPlayer;
+        var player = objectTable.LocalPlayer;
         if (player == null || !player.IsValid())
             return;
 
-        var maiden = this.ResolveTrackedMaiden(player);
-        if (maiden == null)
-            return;
+        overlayScale = Math.Clamp(overlayScale, 0.50f, 2.00f);
 
-        var distance = Vector3.Distance(player.Position, maiden.Position);
+        var maiden = ResolveTrackedMaiden(player);
+        if (maiden == null)
+        {
+            stableScreenPosition = null;
+            stableCompassPosition = null;
+            return;
+        }
+
+        var distance = Vector2.Distance(
+            new Vector2(player.Position.X, player.Position.Z),
+            new Vector2(maiden.Position.X, maiden.Position.Z));
+
         var effectiveHideDistance = Math.Clamp(hideDistance, Plugin.MinTrackerDistance, Plugin.MaxTrackerDistance);
         if (!overlayEnabled || distance <= effectiveHideDistance)
             return;
 
-        if (!this.TryGetMarkerPosition(player, maiden, out var markerPosition, out var clampedToEdge, out var isBehindCamera))
-            return;
+        var drawPosition = maiden.Position + new Vector3(0f, MathF.Max(1.6f, maiden.HitboxRadius + 1.0f), 0f);
 
-        this.DrawMarker(markerPosition, distance, clampedToEdge, isBehindCamera, maiden.Name.TextValue);
+        if (gameGui.WorldToScreen(drawPosition, out var screenPosition, out var inView) && inView && IsFinite(screenPosition))
+        {
+            var stabilized = StabilizePosition(ref stableScreenPosition, SnapToPixel(screenPosition), 2.0f, 24f);
+            DrawWorldMarker(ImGui.GetBackgroundDrawList(), stabilized, distance, overlayScale);
+            stableCompassPosition = null;
+            return;
+        }
+
+        stableScreenPosition = null;
+        DrawCompassMarker(player.Position, drawPosition, distance, overlayScale);
     }
 
     private IGameObject? ResolveTrackedMaiden(IGameObject player)
@@ -94,29 +117,26 @@ public sealed class MaidenOverlayRenderer
         var now = DateTime.UtcNow;
         IGameObject? current = null;
 
-        if (this.trackedObjectId != 0)
-            current = this.objectTable.SearchById(this.trackedObjectId);
+        if (trackedObjectId != 0)
+            current = objectTable.SearchById(trackedObjectId);
 
-        if (!this.IsValidMaiden(current))
-            current = this.FindClosestMaiden(player);
+        if (!IsValidMaiden(current))
+            current = FindClosestMaiden(player);
 
-        if (this.IsValidMaiden(current))
+        if (IsValidMaiden(current))
         {
-            this.trackedObjectId = current!.GameObjectId;
-            this.lastSeenUtc = now;
+            trackedObjectId = current!.GameObjectId;
+            lastSeenUtc = now;
             return current;
         }
 
-        // The game can emit the spawn log message a little before the object enters the object table.
-        if (this.lastSeenUtc == DateTime.MinValue && now <= this.searchUntilUtc)
+        if (lastSeenUtc == DateTime.MinValue && now <= searchUntilUtc)
             return null;
 
-        // If the object was already seen and then disappears from the object table, treat it as defeated/despawned
-        // after a small grace period to avoid one-frame flicker.
-        if (this.lastSeenUtc != DateTime.MinValue && now - this.lastSeenUtc <= TimeSpan.FromSeconds(MissingTimeoutSeconds))
+        if (lastSeenUtc != DateTime.MinValue && now - lastSeenUtc <= TimeSpan.FromSeconds(MissingTimeoutSeconds))
             return null;
 
-        this.StopTracking();
+        StopTracking();
         return null;
     }
 
@@ -125,9 +145,9 @@ public sealed class MaidenOverlayRenderer
         IGameObject? best = null;
         var bestDistance = float.MaxValue;
 
-        foreach (var obj in this.objectTable)
+        foreach (var obj in objectTable)
         {
-            if (!this.IsValidMaiden(obj))
+            if (!IsValidMaiden(obj))
                 continue;
 
             var distance = Vector3.Distance(player.Position, obj!.Position);
@@ -141,7 +161,7 @@ public sealed class MaidenOverlayRenderer
         return best;
     }
 
-    private bool IsValidMaiden(IGameObject? obj)
+    private static bool IsValidMaiden(IGameObject? obj)
     {
         if (obj == null || !obj.IsValid())
             return false;
@@ -155,164 +175,361 @@ public sealed class MaidenOverlayRenderer
         if (obj is ICharacter character && character.CurrentHp == 0)
             return false;
 
-        return this.names.Contains(obj.Name.TextValue);
+        var name = obj.Name.TextValue;
+        foreach (var maidenName in MaidenNames)
+        {
+            if (string.Equals(name, maidenName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
-    private void PullLocalizedNames(IDataManager dataManager)
+    private void DrawWorldMarker(ImDrawListPtr drawList, Vector2 screenPosition, float distance, float overlayScale)
     {
-        try
-        {
-            var ids = new HashSet<uint>();
-            var english = dataManager.GetExcelSheet<RawRow>(ClientLanguage.English, "BNpcName");
+        var visualScale = overlayScale * ImGuiHelpers.GlobalScale;
+        var iconSize = 38f * (IconScaleFactor / 100f) * visualScale;
+        var iconCenter = SnapToPixel(screenPosition - new Vector2(0f, 8f * visualScale));
+        var opacity = IconOpacity / 100f;
+        var pulse = GetPulse();
 
-            foreach (var row in english)
-            {
-                var text = ReadBnpcName(row);
-                foreach (var known in MaidenNames)
-                {
-                    if (string.Equals(text, known, StringComparison.OrdinalIgnoreCase))
-                    {
-                        ids.Add(row.RowId);
-                        break;
-                    }
-                }
-            }
+        DrawIcon(drawList, MaidenIconId, iconCenter, new Vector2(iconSize), opacity, pulse);
 
-            if (ids.Count == 0)
-                return;
+        var labelPosition = iconCenter + new Vector2(0f, iconSize * 0.62f + 12f * visualScale);
 
-            foreach (var lang in Enum.GetValues<ClientLanguage>())
-            {
-                try
-                {
-                    var sheet = dataManager.GetExcelSheet<RawRow>(lang, "BNpcName");
-                    foreach (var id in ids)
-                    {
-                        var name = ReadBnpcName(sheet.GetRow(id));
-                        if (!string.IsNullOrWhiteSpace(name))
-                            this.names.Add(name);
-                    }
-                }
-                catch
-                {
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.Debug(ex, "Could not read Maiden BNpcName rows; using fallback names.");
-        }
+        DrawSoftLabel(
+            drawList,
+            MaidenOverlayName,
+            labelPosition,
+            new Vector4(1f, 1f, 1f, 1f),
+            new Vector4(0f, 0f, 0f, 1f),
+            opacity,
+            1.12f * overlayScale,
+            true);
+
+        DrawSoftLabel(
+            drawList,
+            GetDistanceLabel(distance),
+            labelPosition + new Vector2(0f, 18f * visualScale),
+            new Vector4(1f, 1f, 1f, 1f),
+            new Vector4(0f, 0f, 0f, 1f),
+            opacity,
+            1.12f * overlayScale,
+            false);
     }
 
-    private static string ReadBnpcName(RawRow row)
+    private void DrawCompassMarker(Vector3 playerPosition, Vector3 markerPosition, float distance, float overlayScale)
     {
-        try
-        {
-            return row.ReadStringColumn(0).ToString().Trim();
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-
-    private bool TryGetMarkerPosition(IGameObject player, IGameObject maiden, out Vector2 position, out bool clampedToEdge, out bool isBehindCamera)
-    {
+        var drawList = ImGui.GetBackgroundDrawList();
         var viewport = ImGui.GetMainViewport();
-        var viewportMin = viewport.Pos;
-        var viewportMax = viewport.Pos + viewport.Size;
-        var viewportCenter = viewport.Pos + viewport.Size / 2f;
+        var vpMin = viewport.Pos;
+        var vpMax = viewport.Pos + viewport.Size;
+        var visualScale = overlayScale * ImGuiHelpers.GlobalScale;
+        var iconSize = 35f * (IconScaleFactor / 100f) * visualScale;
+        var clampSize = iconSize * 2.5f;
+        var opacity = IconOpacity / 100f;
+        var pulse = GetPulse();
 
-        var drawPosition = maiden.Position + new Vector3(0f, MathF.Max(1.6f, maiden.HitboxRadius + 1.0f), 0f);
-        var inFrontOfCamera = this.gameGui.WorldToScreen(drawPosition, out var screenPosition, out var inView);
+        Vector2 playerScreen;
+        if (!gameGui.WorldToScreen(playerPosition, out playerScreen, out _))
+            playerScreen = vpMin + viewport.Size / 2f;
 
-        isBehindCamera = !inFrontOfCamera;
+        playerScreen += new Vector2(CenterPointXOffset, CenterPointYOffset);
 
-        if (inFrontOfCamera && inView && IsFinite(screenPosition))
-        {
-            position = screenPosition;
-            clampedToEdge = false;
-            return true;
-        }
+        var direction = GetDirectionToTarget(playerPosition, markerPosition, playerScreen);
+        var iconPos = playerScreen + direction * CompassRadius;
+        iconPos.X = Math.Clamp(iconPos.X, vpMin.X + clampSize + SafeZoneOffsetWidth, vpMax.X - clampSize - SafeZoneOffsetWidth);
+        iconPos.Y = Math.Clamp(iconPos.Y, vpMin.Y + clampSize + SafeZoneOffsetHeight, vpMax.Y - clampSize - SafeZoneOffsetHeight);
+        iconPos = StabilizePosition(ref stableCompassPosition, SnapToPixel(iconPos), 1.5f, 30f);
 
-        var offscreenInset = CalculateOffscreenInset(viewport.Size);
-        var min = viewportMin + offscreenInset;
-        var max = viewportMax - offscreenInset;
-        var direction = this.GetScreenDirectionToTarget(player, maiden, screenPosition, inFrontOfCamera, viewportCenter);
+        DrawIcon(drawList, MaidenIconId, iconPos, new Vector2(iconSize), opacity, pulse);
 
-        position = ProjectDirectionToViewportEdge(viewportCenter, direction, min, max);
-        clampedToEdge = true;
-        return true;
+        var angle = MathF.Atan2(direction.Y, direction.X);
+        var arrowSize = 23f * (IconScaleFactor / 100f) * visualScale;
+        var arrowCenter = iconPos + direction * (iconSize * 0.75f + arrowSize * 0.55f);
+        DrawRotatedIcon(drawList, DirectionArrowIconId, SnapToPixel(arrowCenter), new Vector2(arrowSize * 2f), angle, opacity, pulse);
+
+        var labelPosition = iconPos + new Vector2(0f, iconSize * 0.75f + 14f * visualScale);
+
+        DrawSoftLabel(
+            drawList,
+            MaidenOverlayName,
+            labelPosition,
+            new Vector4(1f, 1f, 1f, 1f),
+            new Vector4(0f, 0f, 0f, 1f),
+            opacity,
+            1.12f * overlayScale,
+            true);
+
+        DrawSoftLabel(
+            drawList,
+            GetDistanceLabel(distance),
+            labelPosition + new Vector2(0f, 18f * visualScale),
+            new Vector4(1f, 1f, 1f, 1f),
+            new Vector4(0f, 0f, 0f, 1f),
+            opacity,
+            1.12f * overlayScale,
+            false);
     }
 
-    private Vector2 GetScreenDirectionToTarget(IGameObject player, IGameObject maiden, Vector2 projectedScreenPosition, bool hasProjectedScreenPosition, Vector2 viewportCenter)
+    private Vector2 GetDirectionToTarget(Vector3 playerPosition, Vector3 markerPosition, Vector2 playerScreen)
     {
-        // If Dalamud can still project the target while it is outside the viewport, use that projected position.
-        // This keeps the marker lined up with the exact camera projection when the target is just off-screen.
-        if (hasProjectedScreenPosition && IsFinite(projectedScreenPosition))
+        if (gameGui.WorldToScreen(markerPosition, out var markerScreen, out _) && IsFinite(markerScreen))
         {
-            var projectedDirection = projectedScreenPosition - viewportCenter;
-            if (projectedDirection.LengthSquared() > 1.0f)
-                return Vector2.Normalize(projectedDirection);
+            var projected = markerScreen - playerScreen;
+            if (projected.LengthSquared() > 1f)
+                return Vector2.Normalize(projected);
         }
 
-        var delta = maiden.Position - player.Position;
+        var delta = markerPosition - playerPosition;
         var targetAngle = MathF.Atan2(delta.X, delta.Z);
         var cameraDirection = TryGetCameraHorizontalDirection(out var cameraDirH)
             ? cameraDirH
-            : player.Rotation;
+            : objectTable.LocalPlayer?.Rotation ?? 0f;
 
         var relativeAngle = NormalizeRadians(targetAngle - cameraDirection);
-
-        // Relative to the camera: 0 = ahead/top of screen, +90° = right, 180° = behind/bottom.
         var direction = new Vector2(MathF.Sin(relativeAngle), -MathF.Cos(relativeAngle));
-        if (direction.LengthSquared() < 0.001f)
-            direction = new Vector2(0f, -1f);
 
-        return Vector2.Normalize(direction);
+        return direction.LengthSquared() < 0.001f ? new Vector2(0f, -1f) : Vector2.Normalize(direction);
     }
 
-    private static Vector2 CalculateOffscreenInset(Vector2 viewportSize)
+    private void DrawIcon(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float opacity, float pulse)
     {
-        return new Vector2(
-            CalculateOffscreenInsetForAxis(viewportSize.X),
-            CalculateOffscreenInsetForAxis(viewportSize.Y));
+        var min = center - size / 2f;
+        var max = center + size / 2f;
+        var color = ApplyAlpha(0xFFFFFFFF, opacity);
+        var wrap = GetIcon(iconId);
+
+        if (wrap != null)
+        {
+            DrawIconGlow(drawList, wrap.Handle, center, size, opacity, pulse);
+            drawList.AddImage(wrap.Handle, min, max, Vector2.Zero, Vector2.One, color);
+        }
     }
 
-    private static float CalculateOffscreenInsetForAxis(float viewportLength)
+    private void DrawRotatedIcon(ImDrawListPtr drawList, uint iconId, Vector2 center, Vector2 size, float rotation, float opacity, float pulse)
     {
-        // Pull off-screen markers inward by roughly 500px on large displays, but scale that value down on
-        // smaller resolutions so the marker stays useful and never collapses into the center of the screen.
-        var maxByViewport = MathF.Max(OffscreenMinimumEdgeMargin, viewportLength * OffscreenMaxViewportFactor);
-        var maxBeforeCenter = MathF.Max(OffscreenMinimumEdgeMargin, (viewportLength / 2f) - OffscreenMinimumCenterDistance);
-        return MathF.Min(OffscreenPreferredInset, MathF.Min(maxByViewport, maxBeforeCenter));
+        var wrap = GetIcon(iconId);
+        if (wrap == null)
+            return;
+
+        DrawRotatedIconGlow(drawList, wrap.Handle, center, size, rotation, opacity, pulse);
+
+        var half = size / 2f;
+        var corners = new[] {
+            new Vector2(-half.X, -half.Y),
+            new Vector2(half.X, -half.Y),
+            new Vector2(half.X, half.Y),
+            new Vector2(-half.X, half.Y),
+        };
+
+        var cos = MathF.Cos(rotation);
+        var sin = MathF.Sin(rotation);
+
+        for (var i = 0; i < corners.Length; i++)
+        {
+            var c = corners[i];
+            corners[i] = center + new Vector2(c.X * cos - c.Y * sin, c.X * sin + c.Y * cos);
+        }
+
+        drawList.AddImageQuad(
+            wrap.Handle,
+            corners[0],
+            corners[1],
+            corners[2],
+            corners[3],
+            Vector2.UnitY,
+            Vector2.Zero,
+            Vector2.UnitX,
+            Vector2.One,
+            ApplyAlpha(0xFFFFFFFF, opacity));
     }
 
-    private static Vector2 ProjectDirectionToViewportEdge(Vector2 center, Vector2 direction, Vector2 min, Vector2 max)
+
+    private static float GetPulse()
     {
-        if (direction.LengthSquared() < 0.001f || !IsFinite(direction))
-            direction = new Vector2(0f, -1f);
-
-        direction = Vector2.Normalize(direction);
-
-        var tx = float.PositiveInfinity;
-        if (direction.X > 0.001f)
-            tx = (max.X - center.X) / direction.X;
-        else if (direction.X < -0.001f)
-            tx = (min.X - center.X) / direction.X;
-
-        var ty = float.PositiveInfinity;
-        if (direction.Y > 0.001f)
-            ty = (max.Y - center.Y) / direction.Y;
-        else if (direction.Y < -0.001f)
-            ty = (min.Y - center.Y) / direction.Y;
-
-        var t = MathF.Min(tx, ty);
-        if (float.IsNaN(t) || float.IsInfinity(t) || t <= 0f)
-            return Vector2.Clamp(center, min, max);
-
-        return Vector2.Clamp(center + direction * t, min, max);
+        var t = (float)ImGui.GetTime();
+        return 0.5f + 0.5f * MathF.Sin(t * 4.2f);
     }
+
+    private static Vector4 GlowColor(float opacity, float pulse)
+        => new(1f, 0.18f, 0.76f, (0.16f + 0.16f * pulse) * opacity);
+
+    private static void DrawIconGlow(ImDrawListPtr drawList, dynamic textureHandle, Vector2 center, Vector2 size, float opacity, float pulse)
+    {
+        var glow = ImGui.GetColorU32(GlowColor(opacity, pulse));
+
+        for (var layer = 3; layer >= 1; layer--)
+        {
+            var grow = size * (0.16f + layer * 0.11f + pulse * 0.07f);
+            var half = (size + grow) / 2f;
+            drawList.AddImage(textureHandle, center - half, center + half, Vector2.Zero, Vector2.One, glow);
+        }
+    }
+
+    private static void DrawRotatedIconGlow(ImDrawListPtr drawList, dynamic textureHandle, Vector2 center, Vector2 size, float rotation, float opacity, float pulse)
+    {
+        var glow = ImGui.GetColorU32(GlowColor(opacity, pulse));
+
+        for (var layer = 3; layer >= 1; layer--)
+        {
+            var grow = size * (0.16f + layer * 0.11f + pulse * 0.07f);
+            DrawRotatedImageQuad(drawList, textureHandle, center, size + grow, rotation, glow);
+        }
+    }
+
+    private static void DrawRotatedImageQuad(ImDrawListPtr drawList, dynamic textureHandle, Vector2 center, Vector2 size, float rotation, uint color)
+    {
+        var half = size / 2f;
+        var corners = new[] {
+            new Vector2(-half.X, -half.Y),
+            new Vector2(half.X, -half.Y),
+            new Vector2(half.X, half.Y),
+            new Vector2(-half.X, half.Y),
+        };
+
+        var cos = MathF.Cos(rotation);
+        var sin = MathF.Sin(rotation);
+
+        for (var i = 0; i < corners.Length; i++)
+        {
+            var c = corners[i];
+            corners[i] = center + new Vector2(c.X * cos - c.Y * sin, c.X * sin + c.Y * cos);
+        }
+
+        drawList.AddImageQuad(
+            textureHandle,
+            corners[0],
+            corners[1],
+            corners[2],
+            corners[3],
+            Vector2.UnitY,
+            Vector2.Zero,
+            Vector2.UnitX,
+            Vector2.One,
+            color);
+    }
+
+    private static void DrawDirectionTriangle(ImDrawListPtr drawList, Vector2 center, float angle, float size, uint color)
+    {
+        var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+        var perpendicular = new Vector2(-direction.Y, direction.X);
+        var tip = center + direction * (size * 0.45f);
+        var baseCenter = center - direction * (size * 0.25f);
+
+        drawList.AddTriangleFilled(
+            tip,
+            baseCenter + perpendicular * (size * 0.25f),
+            baseCenter - perpendicular * (size * 0.25f),
+            color);
+    }
+
+    private static void DrawSoftLabel(ImDrawListPtr drawList, string text, Vector2 center, Vector4 textColor, Vector4 shadowColor, float opacity, float fontScale = 1.0f, bool bold = false)
+    {
+        center = SnapToPixel(center);
+
+        var font = ImGui.GetFont();
+        var fontSize = ImGui.GetFontSize() * Math.Clamp(fontScale, 0.75f, 2.00f);
+        var textSize = ImGui.CalcTextSize(text) * Math.Clamp(fontScale, 0.75f, 2.00f);
+        var pos = SnapToPixel(center - textSize / 2f);
+
+        var shadow = shadowColor;
+        shadow.W *= opacity;
+
+        for (var layer = 4; layer >= 1; layer--)
+        {
+            var radius = MathF.Round(layer * 1.3f * ImGuiHelpers.GlobalScale);
+            var alpha = shadow.W * (0.16f / layer);
+            var c = ImGui.GetColorU32(new Vector4(shadow.X, shadow.Y, shadow.Z, alpha));
+
+            drawList.AddText(font, fontSize, pos + new Vector2(radius, 0f), c, text);
+            drawList.AddText(font, fontSize, pos + new Vector2(-radius, 0f), c, text);
+            drawList.AddText(font, fontSize, pos + new Vector2(0f, radius), c, text);
+            drawList.AddText(font, fontSize, pos + new Vector2(0f, -radius), c, text);
+        }
+
+        DrawThinBlackOutlineText(drawList, font, fontSize, pos, text, opacity);
+
+        var color = textColor;
+        color.W *= opacity;
+        var finalColor = ImGui.GetColorU32(color);
+        drawList.AddText(font, fontSize, pos, finalColor, text);
+
+        if (bold)
+        {
+            var boldStep = MathF.Max(1f, MathF.Round(ImGuiHelpers.GlobalScale));
+            drawList.AddText(font, fontSize, pos + new Vector2(boldStep, 0f), finalColor, text);
+            drawList.AddText(font, fontSize, pos + new Vector2(0f, boldStep * 0.45f), finalColor, text);
+        }
+    }
+
+    private static void DrawThinBlackOutlineText(ImDrawListPtr drawList, ImFontPtr font, float fontSize, Vector2 pos, string text, float opacity)
+    {
+        var outlineColor = ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.92f * opacity));
+        var outline = MathF.Max(1f, MathF.Round(ImGuiHelpers.GlobalScale));
+
+        drawList.AddText(font, fontSize, pos + new Vector2(-outline, 0f), outlineColor, text);
+        drawList.AddText(font, fontSize, pos + new Vector2(outline, 0f), outlineColor, text);
+        drawList.AddText(font, fontSize, pos + new Vector2(0f, -outline), outlineColor, text);
+        drawList.AddText(font, fontSize, pos + new Vector2(0f, outline), outlineColor, text);
+    }
+
+    private string GetDistanceLabel(float distance)
+    {
+        var yalms = (int)MathF.Ceiling(distance);
+        var now = DateTime.UtcNow;
+
+        if (cachedDistanceYalms != yalms && (cachedDistanceYalms < 0 || now - lastDistanceLabelUpdateUtc >= TimeSpan.FromMilliseconds(250)))
+        {
+            cachedDistanceYalms = yalms;
+            cachedDistanceLabel = $"{yalms} yalms";
+            lastDistanceLabelUpdateUtc = now;
+        }
+
+        return string.IsNullOrEmpty(cachedDistanceLabel) ? $"{yalms} yalms" : cachedDistanceLabel;
+    }
+
+    private void ResetStabilizedState()
+    {
+        stableScreenPosition = null;
+        stableCompassPosition = null;
+        cachedDistanceLabel = string.Empty;
+        cachedDistanceYalms = -1;
+        lastDistanceLabelUpdateUtc = DateTime.MinValue;
+    }
+
+    private static Vector2 StabilizePosition(ref Vector2? previous, Vector2 target, float deadzonePixels, float snapDistancePixels)
+    {
+        target = SnapToPixel(target);
+
+        if (previous == null)
+        {
+            previous = target;
+            return target;
+        }
+
+        var current = previous.Value;
+        var delta = target - current;
+        var distanceSquared = delta.LengthSquared();
+
+        if (distanceSquared <= deadzonePixels * deadzonePixels)
+            return SnapToPixel(current);
+
+        if (distanceSquared >= snapDistancePixels * snapDistancePixels)
+        {
+            previous = target;
+            return target;
+        }
+
+        var alpha = 1f - MathF.Exp(-22f * ImGui.GetIO().DeltaTime);
+        current += delta * Math.Clamp(alpha, 0.08f, 0.55f);
+        current = SnapToPixel(current);
+        previous = current;
+        return current;
+    }
+
+    private static Vector2 SnapToPixel(Vector2 position)
+        => new(MathF.Round(position.X), MathF.Round(position.Y));
 
     private static unsafe bool TryGetCameraHorizontalDirection(out float direction)
     {
@@ -347,70 +564,29 @@ public sealed class MaidenOverlayRenderer
         return angle;
     }
 
-    private void DrawMarker(Vector2 center, float distance, bool clampedToEdge, bool isBehindCamera, string maidenName)
-    {
-        var drawList = ImGui.GetForegroundDrawList();
-        var accent = Color(255, 136, 204, 255);
-        var accentDark = Color(95, 20, 68, 230);
-        var white = Color(255, 255, 255, 255);
-        var black = Color(0, 0, 0, 180);
-
-        const float iconRadius = 15f;
-
-        drawList.AddCircleFilled(center, iconRadius + 4f, black, 32);
-        drawList.AddCircleFilled(center, iconRadius, accentDark, 32);
-        drawList.AddCircle(center, iconRadius, accent, 32, 3f);
-
-        // Small diamond inside the circle.
-        drawList.AddQuadFilled(
-            center + new Vector2(0f, -8f),
-            center + new Vector2(8f, 0f),
-            center + new Vector2(0f, 8f),
-            center + new Vector2(-8f, 0f),
-            accent);
-
-        if (clampedToEdge)
-            this.DrawArrow(center, accent, isBehindCamera);
-
-        var label = MaidenText.MarkerLabel(this.language(), maidenName, distance, isBehindCamera);
-        this.DrawLabel(drawList, center + new Vector2(0f, 22f), label, white, black);
-    }
-
-    private void DrawArrow(Vector2 center, uint color, bool isBehindCamera)
-    {
-        var viewport = ImGui.GetMainViewport();
-        var viewportCenter = viewport.Pos + viewport.Size / 2f;
-        var direction = center - viewportCenter;
-
-        if (direction.LengthSquared() < 0.001f)
-            direction = isBehindCamera ? new Vector2(0f, 1f) : new Vector2(0f, -1f);
-
-        direction = Vector2.Normalize(direction);
-        var perpendicular = new Vector2(-direction.Y, direction.X);
-        var tip = center + direction * 26f;
-        var baseCenter = center + direction * 10f;
-
-        ImGui.GetForegroundDrawList().AddTriangleFilled(
-            tip,
-            baseCenter + perpendicular * 8f,
-            baseCenter - perpendicular * 8f,
-            color);
-    }
-
-    private void DrawLabel(ImDrawListPtr drawList, Vector2 center, string text, uint textColor, uint backgroundColor)
-    {
-        var textSize = ImGui.CalcTextSize(text);
-        var padding = new Vector2(7f, 4f);
-        var min = center - textSize / 2f - padding;
-        var max = center + textSize / 2f + padding;
-
-        drawList.AddRectFilled(min, max, backgroundColor, 6f);
-        drawList.AddText(center - textSize / 2f, textColor, text);
-    }
-
     private static bool IsFinite(Vector2 vector)
         => !float.IsNaN(vector.X) && !float.IsNaN(vector.Y) && !float.IsInfinity(vector.X) && !float.IsInfinity(vector.Y);
 
-    private static uint Color(byte r, byte g, byte b, byte a)
-        => (uint)(r | (g << 8) | (b << 16) | (a << 24));
+    private static uint ApplyAlpha(uint color, float opacity)
+    {
+        opacity = Math.Clamp(opacity, 0f, 1f);
+        var alpha = (byte)Math.Clamp(((color >> 24) & 0xFF) * opacity, 0, 255);
+        return (color & 0x00FFFFFF) | ((uint)alpha << 24);
+    }
+
+    private static dynamic? GetIcon(uint iconId)
+    {
+        try
+        {
+            return Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup
+            {
+                IconId = iconId,
+                HiRes = true,
+            }).GetWrapOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

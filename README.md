@@ -1,5 +1,3 @@
-`Most Recent Changelog: 1.0.0.6 - May 22/2026`
-
 ### **Maiden Alert**
 ## ✨ Settings _(`/malert`, `/maidenalert`)_
 

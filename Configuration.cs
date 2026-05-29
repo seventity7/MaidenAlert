@@ -16,6 +16,8 @@ public sealed class Configuration : IPluginConfiguration
 
     public int TrackerDistance { get; set; } = 15;
 
+    public float OverlayScale { get; set; } = 1.0f;
+
     // UIGlobals.PlayChatSoundEffect accepts chat sound IDs from 1 to 16.
     // 8 keeps the same default sound used by the first Maiden Alert build.
     public int SoundId { get; set; } = 8;
@@ -24,6 +26,7 @@ public sealed class Configuration : IPluginConfiguration
     {
         SoundId = Math.Clamp(SoundId, 1, 16);
         TrackerDistance = Math.Clamp(TrackerDistance, Plugin.MinTrackerDistance, Plugin.MaxTrackerDistance);
+        OverlayScale = Math.Clamp(OverlayScale, 0.50f, 2.00f);
     }
 
     public void Save()

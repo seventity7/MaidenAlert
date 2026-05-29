@@ -16,8 +16,8 @@ public sealed class MainWindow : Window, IDisposable
 
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(360, 230),
-            MaximumSize = new Vector2(560, 310),
+            MinimumSize = new Vector2(360, 260),
+            MaximumSize = new Vector2(560, 340),
         };
     }
 
@@ -39,6 +39,7 @@ public sealed class MainWindow : Window, IDisposable
             value => plugin.Configuration.TrackOverlay = value,
             MaidenText.TrackOverlayTip(lang));
         DrawTrackerDistanceRow();
+        DrawTrackerScaleRow();
 
         ImGui.Spacing();
 
@@ -115,6 +116,28 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         DrawTooltipIfHovered(trackerDistanceTooltip);
+    }
+
+    private void DrawTrackerScaleRow()
+    {
+        var lang = plugin.CurrentLanguage;
+        var tip = MaidenText.TrackerScaleTip(lang);
+
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(MaidenText.TrackerScale(lang));
+        DrawTooltipIfHovered(tip);
+        ImGui.SameLine(160f);
+
+        var scale = Math.Clamp(plugin.Configuration.OverlayScale, 0.50f, 2.00f);
+        ImGui.SetNextItemWidth(135f);
+
+        if (ImGui.SliderFloat("##MaidenAlertTrackerScale", ref scale, 0.50f, 2.00f, "%.2fx"))
+        {
+            plugin.Configuration.OverlayScale = scale;
+            plugin.Configuration.Save();
+        }
+
+        DrawTooltipIfHovered(tip);
     }
 
     private static void DrawTooltipIfHovered(string? tooltip)

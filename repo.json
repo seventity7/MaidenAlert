@@ -5,7 +5,7 @@
     "Punchline": "Don't miss any Maiden spawn anymore!",
     "Description": "Maidens will now emit audible notification, chat message and on-screen tracker!",
     "InternalName": "MaidenAlert",
-    "AssemblyVersion": "1.0.0.6",
+    "AssemblyVersion": "1.0.0.7",
     "TestingAssemblyVersion": null,
     "RepoUrl": "https://github.com/seventity7/MaidenAlert",
     "ApplicableVersion": "any",

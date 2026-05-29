@@ -100,6 +100,22 @@ internal static class MaidenText
         _ => "Distance less than or equal to the chosen value,\nthe overlay disappears temporarily.",
     };
 
+    public static string TrackerScale(ClientLanguage lang) => lang switch
+    {
+        ClientLanguage.Japanese => "トラッカースケール",
+        ClientLanguage.German => "Tracker-Skalierung",
+        ClientLanguage.French => "Échelle du suivi",
+        _ => "Tracker scale",
+    };
+
+    public static string TrackerScaleTip(ClientLanguage lang) => lang switch
+    {
+        ClientLanguage.Japanese => "トラッカーのアイコン、矢印、テキストサイズを変更します。",
+        ClientLanguage.German => "Ändert die Größe von Tracker-Symbol, Pfeil und Text.",
+        ClientLanguage.French => "Change la taille de l'icône, de la flèche et du texte du suivi.",
+        _ => "Changes the tracker icon, arrow and text size.",
+    };
+
     public static string MarkerLabel(ClientLanguage lang, string? name, float distance, bool behind)
     {
         var n = string.IsNullOrWhiteSpace(name) ? MaidenFallbackName(lang) : name.Trim();
