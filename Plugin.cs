@@ -6,7 +6,6 @@ using Dalamud.Game.Command;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface.Windowing;
-using Dalamud.Game.Gui.Toast;
 using Dalamud.Interface.Textures;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -50,9 +49,6 @@ public sealed class Plugin : IDalamudPlugin
     internal static IDataManager DataManager { get; private set; } = null!;
 
     [PluginService]
-    internal static IToastGui Toasts { get; private set; } = null!;
-
-    [PluginService]
     internal static ITextureProvider TextureProvider { get; private set; } = null!;
 
     [PluginService]
@@ -72,17 +68,17 @@ public sealed class Plugin : IDalamudPlugin
         Configuration.Validate();
 
         mainWindow = new MainWindow(this);
-        maidenOverlayRenderer = new MaidenOverlayRenderer(ObjectTable, GameGui);
+        maidenOverlayRenderer = new MaidenOverlayRenderer(ObjectTable, GameGui, DataManager, () => CurrentLanguage);
         WindowSystem.AddWindow(mainWindow);
 
         CommandManager.AddHandler(CommandShort, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the Maiden Alert window.",
+            HelpMessage = MaidenText.OpenWindowHelp(CurrentLanguage),
         });
 
         CommandManager.AddHandler(CommandLong, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the Maiden Alert window.",
+            HelpMessage = MaidenText.OpenWindowHelp(CurrentLanguage),
         });
 
         CommandManager.AddHandler(CommandTest, new CommandInfo(OnTestCommand)
@@ -91,9 +87,6 @@ public sealed class Plugin : IDalamudPlugin
         });
 
         ChatGui.LogMessage += OnLogMessage;
-        Toasts.Toast += OnToast;
-        Toasts.QuestToast += OnQuestToast;
-        Toasts.ErrorToast += OnErrorToast;
 
         PluginInterface.UiBuilder.Draw += DrawUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
@@ -107,9 +100,6 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
 
         ChatGui.LogMessage -= OnLogMessage;
-        Toasts.Toast -= OnToast;
-        Toasts.QuestToast -= OnQuestToast;
-        Toasts.ErrorToast -= OnErrorToast;
 
         CommandManager.RemoveHandler(CommandShort);
         CommandManager.RemoveHandler(CommandLong);
@@ -144,25 +134,6 @@ public sealed class Plugin : IDalamudPlugin
 
         TriggerAlert(ignoreDuplicateGuard: false);
         maidenOverlayRenderer.StartTracking();
-    }
-
-    private void OnToast(ref SeString message, ref ToastOptions options, ref bool isHandled)
-        => StopOverlayIfMaidenDissipated(message);
-
-    private void OnQuestToast(ref SeString message, ref QuestToastOptions options, ref bool isHandled)
-        => StopOverlayIfMaidenDissipated(message);
-
-    private void OnErrorToast(ref SeString message, ref bool isHandled)
-        => StopOverlayIfMaidenDissipated(message);
-
-    private void StopOverlayIfMaidenDissipated(SeString message)
-    {
-        var text = message.TextValue;
-        if (text.Contains("forlorn", StringComparison.OrdinalIgnoreCase) &&
-            (text.Contains("dissipates", StringComparison.OrdinalIgnoreCase) ||
-             text.Contains("disappears", StringComparison.OrdinalIgnoreCase) ||
-             text.Contains("disappear", StringComparison.OrdinalIgnoreCase)))
-            maidenOverlayRenderer.StopTracking();
     }
 
     private void TriggerAlert(bool ignoreDuplicateGuard)

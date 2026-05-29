@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Utility;
 using Dalamud.Plugin.Services;
+using Lumina.Excel;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 
 namespace MaidenAlert;
@@ -19,6 +22,13 @@ public sealed class MaidenOverlayRenderer
     private const uint DirectionArrowIconId = 60541;
     private const string MaidenOverlayName = "Maiden Forlorn";
 
+    private static readonly string[] MaidenNames =
+    {
+        "Forlorn Maiden",
+        "Forlon Maiden",
+        "The Forlorn",
+    };
+
     private const int CompassRadius = 750;
     private const int IconScaleFactor = 100;
     private const int IconOpacity = 100;
@@ -27,14 +37,11 @@ public sealed class MaidenOverlayRenderer
     private const int CenterPointXOffset = 0;
     private const int CenterPointYOffset = 0;
 
-    private static readonly string[] MaidenNames = {
-        "Forlorn Maiden",
-        "Forlon Maiden",
-        "The Forlorn",
-    };
 
     private readonly IObjectTable objectTable;
     private readonly IGameGui gameGui;
+    private readonly HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Func<ClientLanguage> getLanguage;
 
     private bool tracking;
     private ulong trackedObjectId;
@@ -45,12 +52,19 @@ public sealed class MaidenOverlayRenderer
     private Vector2? stableCompassPosition;
     private string cachedDistanceLabel = string.Empty;
     private int cachedDistanceYalms = -1;
+    private ClientLanguage cachedDistanceLanguage = ClientLanguage.English;
     private DateTime lastDistanceLabelUpdateUtc = DateTime.MinValue;
 
-    public MaidenOverlayRenderer(IObjectTable objectTable, IGameGui gameGui)
+    public MaidenOverlayRenderer(IObjectTable objectTable, IGameGui gameGui, IDataManager dataManager, Func<ClientLanguage> getLanguage)
     {
         this.objectTable = objectTable;
         this.gameGui = gameGui;
+        this.getLanguage = getLanguage;
+
+        foreach (var name in MaidenNames)
+            this.names.Add(name);
+
+        this.PullLocalizedNames(dataManager);
     }
 
     public void StartTracking()
@@ -161,7 +175,7 @@ public sealed class MaidenOverlayRenderer
         return best;
     }
 
-    private static bool IsValidMaiden(IGameObject? obj)
+    private bool IsValidMaiden(IGameObject? obj)
     {
         if (obj == null || !obj.IsValid())
             return false;
@@ -175,14 +189,65 @@ public sealed class MaidenOverlayRenderer
         if (obj is ICharacter character && character.CurrentHp == 0)
             return false;
 
-        var name = obj.Name.TextValue;
-        foreach (var maidenName in MaidenNames)
-        {
-            if (string.Equals(name, maidenName, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
+        return this.names.Contains(obj.Name.TextValue);
+    }
 
-        return false;
+    private void PullLocalizedNames(IDataManager dataManager)
+    {
+        try
+        {
+            var ids = new HashSet<uint>();
+            var english = dataManager.GetExcelSheet<RawRow>(ClientLanguage.English, "BNpcName");
+
+            foreach (var row in english)
+            {
+                var text = ReadBnpcName(row);
+                foreach (var known in MaidenNames)
+                {
+                    if (string.Equals(text, known, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ids.Add(row.RowId);
+                        break;
+                    }
+                }
+            }
+
+            if (ids.Count == 0)
+                return;
+
+            foreach (var lang in Enum.GetValues<ClientLanguage>())
+            {
+                try
+                {
+                    var sheet = dataManager.GetExcelSheet<RawRow>(lang, "BNpcName");
+                    foreach (var id in ids)
+                    {
+                        var name = ReadBnpcName(sheet.GetRow(id));
+                        if (!string.IsNullOrWhiteSpace(name))
+                            this.names.Add(name);
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Debug(ex, "Could not read Maiden BNpcName rows; using fallback names.");
+        }
+    }
+
+    private static string ReadBnpcName(RawRow row)
+    {
+        try
+        {
+            return row.ReadStringColumn(0).ToString().Trim();
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private void DrawWorldMarker(ImDrawListPtr drawList, Vector2 screenPosition, float distance, float overlayScale)
@@ -477,16 +542,19 @@ public sealed class MaidenOverlayRenderer
     private string GetDistanceLabel(float distance)
     {
         var yalms = (int)MathF.Ceiling(distance);
+        var lang = getLanguage();
         var now = DateTime.UtcNow;
 
-        if (cachedDistanceYalms != yalms && (cachedDistanceYalms < 0 || now - lastDistanceLabelUpdateUtc >= TimeSpan.FromMilliseconds(250)))
+        if ((cachedDistanceYalms != yalms || cachedDistanceLanguage != lang) &&
+            (cachedDistanceYalms < 0 || now - lastDistanceLabelUpdateUtc >= TimeSpan.FromMilliseconds(250)))
         {
             cachedDistanceYalms = yalms;
-            cachedDistanceLabel = $"{yalms} yalms";
+            cachedDistanceLanguage = lang;
+            cachedDistanceLabel = MaidenText.DistanceYalms(lang, yalms);
             lastDistanceLabelUpdateUtc = now;
         }
 
-        return string.IsNullOrEmpty(cachedDistanceLabel) ? $"{yalms} yalms" : cachedDistanceLabel;
+        return string.IsNullOrEmpty(cachedDistanceLabel) ? MaidenText.DistanceYalms(lang, yalms) : cachedDistanceLabel;
     }
 
     private void ResetStabilizedState()
@@ -495,6 +563,7 @@ public sealed class MaidenOverlayRenderer
         stableCompassPosition = null;
         cachedDistanceLabel = string.Empty;
         cachedDistanceYalms = -1;
+        cachedDistanceLanguage = ClientLanguage.English;
         lastDistanceLabelUpdateUtc = DateTime.MinValue;
     }
 

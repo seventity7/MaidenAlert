@@ -4,6 +4,22 @@ namespace MaidenAlert;
 
 internal static class MaidenText
 {
+    public static string OpenWindowHelp(ClientLanguage lang) => lang switch
+    {
+        ClientLanguage.Japanese => "Maiden Alertの設定を開きます。",
+        ClientLanguage.German => "Öffnet das Maiden Alert-Fenster.",
+        ClientLanguage.French => "Ouvre la fenêtre de Maiden Alert.",
+        _ => "Open the Maiden Alert window.",
+    };
+
+    public static string DistanceYalms(ClientLanguage lang, int yalms) => lang switch
+    {
+        ClientLanguage.Japanese => $"{yalms} m",
+        ClientLanguage.German => $"{yalms} Yalme",
+        ClientLanguage.French => $"{yalms} yalms",
+        _ => $"{yalms} yalms",
+    };
+
     public static string AlertMessage(ClientLanguage lang) => lang switch
     {
         ClientLanguage.Japanese => "[Maiden Alert] フォーローン・メイデンがこのF.A.T.E.に出現しました！",
