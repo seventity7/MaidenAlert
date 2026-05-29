@@ -6,6 +6,7 @@
   - Sound: Choose a sound from the list to be played as the notification sound if enabled
   - Tracker Overlay: Disable/Enable Maiden entity on-screen tracker overlay
   - Tracker Distance: Set distance less than or equal from the Maiden when the overlay starts to temporarily disappears
+  - Tracker Scale: Modify tracker elements size to your liking
   - Test Notification: Press to simulate the notification happening _(Following settings)_
 
 ## 🧾 Notes
